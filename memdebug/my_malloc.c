@@ -71,7 +71,6 @@ static MD_CHUNK *MdCreateChunk(
 static void *MdAllocateBuffer(size_t Size, int Line);
 static void MdFreeBuffer(void *Buffer, int Line);
 static int MdReportActiveChunks();
-static bool MdIsChunkFree(MD_CHUNK *Chunk);
 
 void xinit(size_t Size) {
     MD_CHUNK *LastChunk = NULL;
@@ -149,7 +148,14 @@ static MD_CHUNK *MdCreateChunk(
     return Chunk;
 }
 
-static void *MdGetPaddingAfter(MD_CHUNK *Chunk)
+static bool MdIsChunkFree(const MD_CHUNK *Chunk)
+{
+	assert(Chunk);
+	
+	return Chunk->BytesUsed == MD_BYTES_USED_FREE;
+}
+
+static void *MdGetPaddingAfter(const MD_CHUNK *Chunk)
 {
     assert(Chunk);
     assert(!MdIsChunkFree(Chunk));
@@ -157,7 +163,7 @@ static void *MdGetPaddingAfter(MD_CHUNK *Chunk)
     return Chunk->Usable + Chunk->BytesUsed;
 }
 
-static int MdGetUnusedBytes(MD_CHUNK *Chunk)
+static int MdGetUnusedBytes(const MD_CHUNK *Chunk)
 {
    assert(Chunk);
    assert(!MdIsChunkFree(Chunk));
@@ -266,11 +272,4 @@ static int MdReportActiveChunks()
 	} while ((Chunk = Chunk->Next));
 	
 	return Count;
-}
-
-static bool MdIsChunkFree(MD_CHUNK *Chunk)
-{
-	assert(Chunk);
-	
-	return Chunk->BytesUsed == MD_BYTES_USED_FREE;
 }
