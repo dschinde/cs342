@@ -11,12 +11,6 @@
 
 
 /*
- * The total amount of allocated memory.
- */
-#define     MEMORY_SIZE             100000
-
-
-/*
  * A linked list of chunks of available memory.
  * Note that all the memory (e.g. the begin pointers) are
  * allocated out of a single contiguous block of memory.
@@ -84,13 +78,13 @@ void xinit(size_t Size) {
     char *cp;
     int  i;
 
-    block = malloc(MEMORY_SIZE);
+    block = malloc(Size);
     upper_limit = block;
     cp = block;
 
     for (i = 0; i < NUM_CHUNK_SIZES; i++) {
         int chunk_size = CHUNK_SIZES[i];
-        upper_limit += MEMORY_SIZE / 4;
+        upper_limit += Size / 4;
 
         while (cp + chunk_size <= upper_limit) {
             struct memory *chunk = create_chunk(cp, chunk_size);
