@@ -51,11 +51,48 @@ static int CHUNK_SIZES[] = { 1024, 2048, 4096, 8192 };
 #define MD_BYTES_USED_FREE  (size_t)-1
 
 
-/*
- * The root of the linked list of memory chunks.
- */
-static MD_CHUNK *FirstChunk = NULL;
+typedef struct MD_LIST {
+	MD_CHUNK *First;
+} MD_LIST;
 
+static MD_LIST FreeChunks = { .First = NULL };
+static MD_LIST UsedChunks = { .First = NULL };
+
+static void MdRemoveFromList(
+	MD_LIST  *List,
+	MD_CHUNK *Chunk,
+	MD_CHUNK *PreviousChunk)
+{
+	assert(List);
+	assert(Chunk);
+	assert(Chunk == List->First || PreviousChunk != NULL);
+	
+	if (PreviousChunk) {
+		PreviousChunk->Next = Chunk->Next;
+	} else {
+		List->First = Chunk->Next;
+	}
+	
+	Chunk->Next = NULL;
+}
+	
+static void MdAppendToList(
+	MD_LIST  *List,
+	MD_CHUNK *Chunk)
+{
+	assert(List);
+	assert(Chunk);
+	
+	Chunk->Next = List->First;
+	List->First = Chunk;
+}
+
+#define MdForEach(List, Chunk, PreviousChunk)	\
+for (MD_CHUNK *Chunk = (List)->First, 			\
+			  *PreviousChunk = NULL;			\
+	 Chunk != NULL;								\
+	 PreviousChunk = Chunk,						\
+	 Chunk = Chunk->Next)
 
 /*
  * The single block of memory allocated and available.
@@ -73,8 +110,6 @@ static void MdFreeBuffer(void *Buffer, int Line);
 static int MdReportActiveChunks();
 
 void xinit(size_t Size) {
-    MD_CHUNK *LastChunk = NULL;
-
     Block = malloc(Size);
 	assert(Block);
 	
@@ -87,12 +122,9 @@ void xinit(size_t Size) {
 
         while (pb + ChunkSize <= UpperLimit) {
             MD_CHUNK *Chunk = MdCreateChunk(pb, ChunkSize);
-            if (FirstChunk == NULL) {
-                FirstChunk = Chunk;
-            } else {
-                LastChunk->Next = Chunk;
-            }
-            LastChunk = Chunk;
+            
+			MdAppendToList(&FreeChunks, Chunk);
+			
             pb += ChunkSize;
         }
     }
@@ -101,16 +133,14 @@ void xinit(size_t Size) {
 void xshutdown() {
     free(Block);
     Block = NULL;
-
-    MD_CHUNK *Current = FirstChunk,
-			 *Next;
-
-    while (Current != NULL) {
-        Next = Current->Next;
-        free(Current);
-        Current = Next;
-    }
-    FirstChunk = NULL;
+	
+	MdForEach(&FreeChunks, Next, Current) {
+		if (Current) {
+			free(Current);
+		}
+	}
+	
+    FreeChunks.First = NULL;
 }
 
 
@@ -177,99 +207,89 @@ static void *MdAllocateBuffer(size_t Size, int Line)
 		return NULL;
 	}
 
-	MD_CHUNK *Chunk = FirstChunk;
-	do {
-		if (MdIsChunkFree(Chunk)) {
-			if (Size < Chunk->MaxBytes) {
-				Chunk->BytesUsed = Size;
-				memset(Chunk->Usable + Size, 
-					PADDING_BYTE, 
-					PADDING_SIZE);
-				Chunk->Line = Line;
-				break;
-			}
+	MdForEach(&FreeChunks, Chunk, PreviousChunk) {
+		if (Size < Chunk->MaxBytes) {
+			Chunk->BytesUsed = Size;
+			memset(Chunk->Usable + Size, 
+				PADDING_BYTE, 
+				PADDING_SIZE);
+			Chunk->Line = Line;
+			
+			MdRemoveFromList(
+				&FreeChunks,
+				Chunk,
+				PreviousChunk);
+			
+			MdAppendToList(&UsedChunks, Chunk);
+			
+			return Chunk->Usable;
 		}
-	} while ((Chunk = Chunk->Next));
-	
-	if (Chunk == NULL) {
-		return NULL;
 	}
 	
-	return Chunk->Usable;
+	return NULL;
 }
 
 static void MdFreeBuffer(void *Buffer, int Line)
 {
-	MD_CHUNK *Chunk = FirstChunk;
-	do {
+	MdForEach(&UsedChunks, Chunk, PreviousChunk) {
 		if (Chunk->Usable == Buffer) {
-			break;
-		}
-	} while ((Chunk = Chunk->Next));
-	
-	if (Chunk == NULL) {
-		fprintf(stderr, 
-			"Free requested at line %d for unknown memory"
-			" segment.\n", 
-			Line);
-		exit(EXIT_FAILURE);
-	}
-	
-	if (MdIsChunkFree(Chunk)) {
-		fprintf(stderr,
-			"Free requested at line %d for previously freed"
-			" memory segment allocated at line %d.\n",
-			Line,
-			Chunk->Line);
-		exit(EXIT_FAILURE);
-	}
-	
-	for (unsigned char *pb = Chunk->Buffer; 
-		pb != Chunk->Usable; ++pb)
-	{
-		if (*pb != PADDING_BYTE) {
-			fprintf(stderr,
-				"Illegal write %ld bytes before %lu bytes of"
-				" memory allocated at line %d.\n",
-				Chunk->Usable - pb,
-				Chunk->BytesUsed,
-				Chunk->Line);
-			exit(EXIT_FAILURE);
-		}
-	}
-	
-	unsigned char *PaddingAfter = MdGetPaddingAfter(Chunk);
-	for (int i = 0; i < PADDING_SIZE; ++i)
-	{
-		if (PaddingAfter[i] != PADDING_BYTE) {
-			fprintf(stderr,
-				"Illegal write %d bytes after %lu bytes of"
-				" memory allocated at line %d.\n",
-				i + 1,
-				Chunk->BytesUsed,
-				Chunk->Line);
-			exit(EXIT_FAILURE);
+			for (unsigned char *pb = Chunk->Buffer; 
+				pb != Chunk->Usable; ++pb)
+			{
+				if (*pb != PADDING_BYTE) {
+					fprintf(stderr,
+						"Illegal write %ld bytes before %lu"
+						" bytes ofmemory allocated at line"
+						" %d.\n",
+						Chunk->Usable - pb,
+						Chunk->BytesUsed,
+						Chunk->Line);
+					exit(EXIT_FAILURE);
+				}
+			}
+			
+			unsigned char *PaddingAfter = MdGetPaddingAfter(Chunk);
+			for (int i = 0; i < PADDING_SIZE; ++i)
+			{
+				if (PaddingAfter[i] != PADDING_BYTE) {
+					fprintf(stderr,
+						"Illegal write %d bytes after %lu"
+						" bytes of memory allocated at line"
+						" %d.\n",
+						i + 1,
+						Chunk->BytesUsed,
+						Chunk->Line);
+					exit(EXIT_FAILURE);
+				}
+			}
+			
+			Chunk->BytesUsed = MD_BYTES_USED_FREE;
+			MdRemoveFromList(&UsedChunks, Chunk, PreviousChunk);
+			MdAppendToList(&FreeChunks, Chunk);
+			
+			return;
 		}
 	}
 	
-	Chunk->BytesUsed = -1;
+	fprintf(stderr, 
+		"Free requested at line %d for unknown memory"
+		" segment.\n", 
+		Line);
+	exit(EXIT_FAILURE);
 }
 
 static int MdReportActiveChunks()
 {
 	int Count = 0;
 	
-	MD_CHUNK *Chunk = FirstChunk;
-	do {
-		if (!MdIsChunkFree(Chunk)) {
-			fprintf(stderr,
-				"%lu bytes of unfreed memory allocated at"
-				" line %d.\n",
-				Chunk->BytesUsed,
-				Chunk->Line);
-			++Count;
-		}
-	} while ((Chunk = Chunk->Next));
+	MdForEach(&UsedChunks, Chunk, PreviousChunk) {
+		fprintf(stderr,
+			"%lu bytes of unfreed memory allocated at"
+			" line %d.\n",
+			Chunk->BytesUsed,
+			Chunk->Line);
+		++Count;
+	}
 	
 	return Count;
 }
