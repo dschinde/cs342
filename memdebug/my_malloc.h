@@ -2,7 +2,7 @@
  * Header file 
  */
 
-void xinit();
+void xinit(size_t Size);
 void xshutdown();
 
 #define xmalloc(n)  _xmalloc(n, __LINE__)

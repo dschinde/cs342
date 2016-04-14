@@ -1,6 +1,12 @@
+/*
+ * See MdGetPaddingAfter() and MdGetUnusedBytes()
+ */
+ 
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 
@@ -65,7 +71,14 @@ static char *block = NULL;
 static struct memory *create_chunk(char *begin, int bytes);
 
 
-void xinit() {
+static void *MdAllocateBuffer(size_t Size, int Line);
+static void MdFreeBuffer(void *Buffer, int Line);
+static int MdReportActiveChunks();
+
+#define MdIsChunkFree(chunk) (chunk->bytes_used == -1)
+
+
+void xinit(size_t Size) {
     struct memory *last_chunk = NULL;
     char *upper_limit;
     char *cp;
@@ -109,14 +122,17 @@ void xshutdown() {
 
 
 void *_xmalloc(int nbytes, int line_num) {
+	return MdAllocateBuffer(nbytes, line_num);
 }
 
 
 void _xfree(void *vp, int line_num) {
+	MdFreeBuffer(vp, line_num);
 }
 
 
 int xdebug() {
+	return MdReportActiveChunks();
 }
 
 
@@ -136,4 +152,122 @@ static struct memory *create_chunk(char *begin, int bytes) {
     }
 
     return mp;
+}
+
+static void *MdGetPaddingAfter(struct memory *mp)
+{
+    assert(mp);
+    assert(!MdIsChunkFree(mp));
+ 
+    return mp->ubegin + mp->bytes_used;
+}
+
+static int MdGetUnusedBytes(struct memory *mp)
+{
+   assert(mp);
+   assert(!MdIsChunkFree(mp));
+   
+   return mp->bytes_max - mp->bytes_used;
+}
+
+static void *MdAllocateBuffer(size_t Size, int Line)
+{
+	if (INT_MAX < Size) {
+		return NULL;
+	}
+
+	struct memory *chunk = first_chunk;
+	do {
+		if (MdIsChunkFree(chunk)) {
+			if ((int)Size < chunk->bytes_max) {
+				chunk->bytes_used = (int)Size;
+				memset(chunk->ubegin + Size, 
+					PADDING_BYTE, 
+					PADDING_SIZE);
+				chunk->line_num = Line;
+				break;
+			}
+		}
+	} while ((chunk = chunk->next));
+	
+	if (chunk == NULL) {
+		return NULL;
+	}
+	
+	return chunk->ubegin;
+}
+
+static void MdFreeBuffer(void *Buffer, int Line)
+{
+	struct memory *chunk = first_chunk;
+	do {
+		if (chunk->ubegin == Buffer) {
+			break;
+		}
+	} while ((chunk = chunk->next));
+	
+	if (chunk == NULL) {
+		fprintf(stderr, 
+			"Free requested at line %d for unknown memory"
+			" segment.\n", 
+			Line);
+		exit(EXIT_FAILURE);
+	}
+	
+	if (MdIsChunkFree(chunk)) {
+		fprintf(stderr,
+			"Free requested at line %d for previously freed"
+			" memory segment allocated at line %d.\n",
+			Line,
+			chunk->line_num);
+		exit(EXIT_FAILURE);
+	}
+	
+	for (char *pb = chunk->begin; pb != chunk->ubegin; ++pb)
+	{
+		if (*pb != PADDING_BYTE) {
+			fprintf(stderr,
+				"Illegal write %ld bytes before %d bytes of"
+				" memory allocated at line %d.\n",
+				chunk->ubegin - pb,
+				chunk->bytes_used,
+				chunk->line_num);
+			exit(EXIT_FAILURE);
+		}
+	}
+	
+	char *PaddingAfter = MdGetPaddingAfter(chunk);
+	for (int i = 0; i < PADDING_SIZE; ++i)
+	{
+		if (PaddingAfter[i] != PADDING_BYTE) {
+			fprintf(stderr,
+				"Illegal write %d bytes after %d bytes of"
+				" memory allocated at line %d.\n",
+				i + 1,
+				chunk->bytes_used,
+				chunk->line_num);
+			exit(EXIT_FAILURE);
+		}
+	}
+	
+	chunk->bytes_used = -1;
+}
+
+static int MdReportActiveChunks()
+{
+	int Count = 0;
+	
+	struct memory *chunk = first_chunk;
+	do {
+		if (!MdIsChunkFree(chunk)) {
+			fprintf(stderr,
+				"%d bytes of unfreed memory allocated at"
+				" line %d.\n",
+				chunk->bytes_used,
+				chunk->line_num);
+			++Count;
+		}
+	} while ((chunk = chunk->next));
+	
+	return Count;
 }
