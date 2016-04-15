@@ -1,7 +1,10 @@
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "list.h"
 #include "log.h"
@@ -19,7 +22,11 @@ typedef struct GCObject {
 	bool Marked;
 } GCObject;
 
+static void GCInitialize();
 static void GCFreeByIndex(GCObject *Object, size_t Index);
+static void GCMarkObject(GCObject *Object);
+static void GCSweep();
+static bool IsGCBuffer(void *Buffer);
 
 void *GCGetBuffer(GCObject *Object)
 {
@@ -29,30 +36,6 @@ void *GCGetBuffer(GCObject *Object)
 GCObject *GCGetObject(void *Buffer)
 {
 	return ((GCObject*)Buffer) - 1;
-}
-
-void GCInitialize()
-{
-	static bool Initialized = false;
-	
-	if (!Initialized) {
-		FreeBlocks = GCCreateList();
-		UsedBlocks = GCCreateList();
-	
-		size_t MemorySize = 1024 * 1024;
-		size_t ByteCount = sizeof(GCObject) + MemorySize;
-		
-		GCObject *Block = malloc(ByteCount);
-		assert(Block);
-		
-		MemoryBase = Block;
-		MemoryEnd = Block + ByteCount;
-		
-		Block->Size = MemorySize;
-		GCPushList(FreeBlocks, Block);
-		
-		Initialized = true;
-	}
 }
 
 GCObject *GCAlloc(size_t Size)
@@ -102,39 +85,50 @@ GCObject *GCAlloc(size_t Size)
 	return NULL;
 }
 
-void GCFree(GCObject *Object)
+void GCListUsedObjects()
 {
-	assert(Object);
+	size_t ListSize = GCQueryListSize(UsedBlocks);
+	for (size_t i = 0; i < ListSize; ++i) {
+		GCObject *Object = GCGetListEntry(UsedBlocks, i);
+		GCTrace("Object: %p, Size: %lu", 
+			Object, 
+			Object->Size);
+	}
+}
+
+void GCInitialize()
+{
+	static bool Initialized = false;
 	
-	size_t Index = GCIndexOfList(UsedBlocks, Object);
-	assert(Index != GCNoSuchObject);
+	if (!Initialized) {
+		FreeBlocks = GCCreateList();
+		UsedBlocks = GCCreateList();
 	
-	GCFreeByIndex(Object, Index);
+		size_t MemorySize = 1024 * 1024;
+		size_t ByteCount = sizeof(GCObject) + MemorySize;
+		
+		GCObject *Block = malloc(ByteCount);
+		assert(Block);
+		
+		MemoryBase = Block;
+		MemoryEnd = Block + ByteCount;
+		
+		Block->Size = MemorySize;
+		GCPushList(FreeBlocks, Block);
+		
+		Initialized = true;
+	}
 }
 
 void GCFreeByIndex(GCObject *Object, size_t Index)
 {
+	assert(Object);
+	
 	GCDebug("Freeing object %p with size %lu", 
 		Object, Object->Size);
 		
 	GCPopList(UsedBlocks, Index);
 	GCPushList(FreeBlocks, Object);
-}
-
-bool IsGCBuffer(void *Pointer)
-{
-	if (Pointer == NULL) {
-		return false;
-	}
-	
-	if (MemoryBase < Pointer && Pointer < MemoryEnd)
-	{
-		GCObject *Object = GCGetObject(Pointer);
-		size_t Index = GCIndexOfList(UsedBlocks, Object);
-		return Index != GCNoSuchObject;
-	}
-	
-	return false;
 }
 
 void GCMarkObject(GCObject *Object)
@@ -169,6 +163,9 @@ void GCSweep()
 	for (size_t i = 0; i < ListSize; ++i) {
 		GCObject *Object = GCGetListEntry(UsedBlocks, i);
 		if (Object->Marked) {
+			Object->Marked = false;
+		}
+		else {
 			GCFreeByIndex(Object, i);
 		}
 	}
@@ -176,13 +173,88 @@ void GCSweep()
 	GCUnpinList(UsedBlocks);
 }
 
-void GCListUsedObjects()
+bool IsGCBuffer(void *Buffer)
 {
-	size_t ListSize = GCQueryListSize(UsedBlocks);
-	for (size_t i = 0; i < ListSize; ++i) {
-		GCObject *Object = GCGetListEntry(UsedBlocks, i);
-		GCTrace("Object: %p, Size: %lu", 
-			Object, 
-			Object->Size);
+	if (Buffer == NULL) {
+		return false;
 	}
+	
+	if (MemoryBase < Buffer && Buffer < MemoryEnd)
+	{
+		GCObject *Object = GCGetObject(Buffer);
+		size_t Index = GCIndexOfList(UsedBlocks, Object);
+		return Index != GCNoSuchObject;
+	}
+	
+	return false;
+}
+
+
+
+static void *GetStackBase()
+{
+	const char *Format =
+		"%*d %*s %*c %*d %*d %*d %*d %*d %*u %*lu "
+		"%*lu %*lu %*lu %*lu %*lu %*ld %*ld %*ld %*ld %*ld "
+		"%*ld %*llu %*lu %*ld %*lu %*lu %*lu %lu %*lu %*lu ";
+
+	FILE *Stat = fopen("/proc/self/stat", "r");
+	assert(Stat);
+	
+	uint64_t StackBase = 0;
+	
+	if (fscanf(Stat, Format, &StackBase) != 1) {
+		assert(false);
+	}
+	
+	fclose(Stat);
+	
+	return (void*)StackBase;
+}
+
+void GCCollect()
+{
+	register void *rsp asm("rsp");
+	void *StackBase = GetStackBase();
+			
+	void **Stack = rsp + ((uintptr_t)rsp % sizeof(void*));
+	
+	GCDebug("rsp is %p and the stack base is %p",
+		rsp,
+		StackBase);
+	GCDebug("Scanning from %p", Stack);
+	
+	for (; (void*)Stack < StackBase; ++Stack)
+	{
+		if (IsGCBuffer(*Stack)) {
+			GCObject *Object = GCGetObject(*Stack);
+			GCMarkObject(Object);
+		}
+	}
+	
+	register void *r12 asm("r12");
+	register void *r13 asm("r13");
+	register void *r14 asm("r14");
+	register void *r15 asm("r15");
+	register void *rdi asm("rdi");
+	register void *rsi asm("rsi");
+	register void *rbx asm("rbx");
+	register void *rbp asm("rbp");
+	
+#define CheckRegister(Register)					  \
+	if (IsGCBuffer(Register)) {					  \
+		GCObject *Object = GCGetObject(Stack);	  \
+		GCMarkObject(Object);					  \
+	}
+	
+	CheckRegister(r12);
+	CheckRegister(r13);
+	CheckRegister(r14);
+	CheckRegister(r15);
+	CheckRegister(rdi);
+	CheckRegister(rsi);
+	CheckRegister(rbx);
+	CheckRegister(rbp);
+	
+	GCSweep();
 }

@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 #include "malloc.h"
 
 struct A;
@@ -46,13 +48,30 @@ void **AllocateArray()
 	return a;
 }
 
-int main(int argc, char *argv[])
+long leak()
+{
+	void *a = gcmalloc(100);
+	void *b = gcmalloc(200);
+	void **x = AllocateArray();
+	
+	return (long)a + (long)b ^ (long)x;
+}
+
+void leak2()
 {
 	struct A *a = Allocate();
+	printf("%p\n", a);
+}
+
+int main(int argc, char *argv[])
+{
+	//struct A *a = Allocate();
 	void **arr = AllocateArray();
-	gcfree(a);
-	gcfree(arr);
 	
+	leak();
+	leak2();
+	
+	gccollect();
 	gcdebug();
 
 	return 0;

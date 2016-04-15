@@ -10,5 +10,4 @@ void 	  GCFree(GCObject *Object);
 
 void 	  GCListUsedObjects();
 
-void	  GCMarkObject(GCObject *Object);
-void      GCSweep();
+void	  GCCollect();

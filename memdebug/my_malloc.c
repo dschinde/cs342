@@ -23,6 +23,7 @@ typedef struct MD_CHUNK {
     int Line;       		/* The line number which allocated the memory */
     unsigned char *Buffer,  /* Beginning of the chunk (starts with padding) */
 				  *Usable;  /* Usable beginning (after padding). */
+	bool Marked;
 } MD_CHUNK;
 
 
@@ -107,6 +108,7 @@ static MD_CHUNK *MdCreateChunk(
 
 static void *MdAllocateBuffer(size_t Size, int Line);
 static void MdFreeBuffer(void *Buffer, int Line);
+static void MdCollectGarbage(void **Active, size_t ActiveCount);
 static int MdReportActiveChunks();
 
 void xinit(size_t Size) {
@@ -292,4 +294,21 @@ static int MdReportActiveChunks()
 	}
 	
 	return Count;
+}
+
+static void MdCollectGarbage(
+	void **Active, 
+	size_t ActiveCount)
+{
+	MdForEach(&UsedChunks, Chunk, PreviousChunk) {
+		bool Found = false;
+		for (size_t i = 0; i < ActiveCount; i++) {
+			if (Active[i] == Chunk->Usable) {
+				Found = true;
+			}
+		}
+		Chunk->Marked = Found;
+	}
+
+	
 }
