@@ -22,6 +22,9 @@
  * prevents the GCList's elements from moving, which
  * normally only happends when an item is removed.
  * Call GCUnpinList() after the loop.
+ *
+ * The order of a GCList may change when the list is
+ * modified.
  */
 
 typedef struct GCList GCList;
@@ -29,17 +32,32 @@ typedef struct GCObject GCObject;
 
 #define GCNoSuchObject (size_t)-1
 
-GCList   *GCCreateList();
-void      GCDestroyList(GCList *List);
+GCList *GCCreateList();
 
-void 	  GCPushList(GCList *List, GCObject *Object);
-GCObject *GCPopList(GCList *List, size_t Index);
+void GCDestroyList(
+	GCList *List);
 
-size_t    GCQueryListSize(const GCList *List);
-GCObject *GCGetListEntry(const GCList *List, size_t Index);
-size_t    GCIndexOfList(
+void GCPushList(
+	GCList   *List, 
+	GCObject *Object);
+	
+GCObject *GCPopList(
+	GCList *List, 
+	size_t  Index);
+
+size_t GCQueryListSize(
+	const GCList *List);
+GCObject *GCGetListEntry(
+	const GCList *List, 
+	size_t Index);
+size_t GCIndexOfList(
 	const GCList *List, 
 	const GCObject *Object);
 	
-void GCPinList(GCList *List);
-void GCUnpinList(GCList *List);
+void GCPinList(
+	GCList *List);
+void GCUnpinList(
+	GCList *List);
+
+void GCSortList(
+	GCList *List);

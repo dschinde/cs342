@@ -25,6 +25,8 @@ static void GCInitialize();
 static void GCFreeByIndex(GCObject *Object, size_t Index);
 static void GCMarkObject(GCObject *Object);
 static void GCSweep();
+static void GCCompactBlocks(GCList *List);
+static void GCReportBlocks(const GCList *List);
 static bool IsGCBuffer(void *Buffer);
 
 void *GCGetBuffer(GCObject *Object)
@@ -84,15 +86,27 @@ GCObject *GCAlloc(size_t Size)
 	return NULL;
 }
 
-void GCListUsedObjects()
+void GCReportBlocks(const GCList *List)
 {
-	size_t ListSize = GCQueryListSize(UsedBlocks);
+	size_t ListSize = GCQueryListSize(List);
 	for (size_t i = 0; i < ListSize; ++i) {
-		GCObject *Object = GCGetListEntry(UsedBlocks, i);
-		GCTrace("Object: %p, Size: %lu", 
+		GCObject *Object = GCGetListEntry(List, i);
+		GCTrace("++ Object: %p, Size: %lu", 
 			Object, 
 			Object->Size);
 	}
+}
+
+void GCListUsedObjects()
+{
+	GCTrace("Used Objects");
+	GCReportBlocks(UsedBlocks);
+}
+
+void GCListFreeObjects()
+{
+	GCTrace("Free Objects");
+	GCReportBlocks(FreeBlocks);
 }
 
 void GCInitialize()
@@ -188,7 +202,42 @@ bool IsGCBuffer(void *Buffer)
 	return false;
 }
 
-
+static void GCCompactBlocks(GCList *List)
+{
+	assert(List);
+	
+	GCSortList(List);
+	GCPinList(List);
+	
+	size_t ListSize = GCQueryListSize(List);
+	
+	if (ListSize < 2) {
+		return;
+	}
+	
+	GCObject *Current = GCGetListEntry(List, 0);
+	size_t NextIndex = 1;
+	
+	for (; NextIndex < ListSize; ++NextIndex)
+	{
+		GCObject *Next = GCGetListEntry(List, NextIndex);
+		size_t Offset = sizeof(GCObject) + Current->Size;
+		if ((char*)Current + Offset == (char*)Next) {
+			GCTrace("Combining object %p of size %lu with"
+				    " object %p of size %lu.",
+					Current, Current->Size,
+					Next, Next->Size);
+					
+			Current->Size += Offset;
+			GCPopList(List, NextIndex);
+		}
+		else {
+			Current = Next;
+		}
+	}
+	
+	GCUnpinList(List);
+}
 
 static void *GetStackBase()
 {
@@ -256,4 +305,5 @@ void GCCollect()
 	CheckRegister(rbp);
 	
 	GCSweep();
+	GCCompactBlocks(FreeBlocks);
 }

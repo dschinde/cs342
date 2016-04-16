@@ -13,6 +13,8 @@ typedef struct GCList {
 	GCObject **Buffer;
 } GCList;
 
+static int ComparePointers(const void *a, const void *b);
+
 GCList *GCCreateList()
 {
 	GCList *List = malloc(sizeof(GCList));
@@ -145,4 +147,17 @@ void GCUnpinList(GCList *List)
 		{
 		}
 	}
+}
+
+void GCSortList(GCList *List)
+{
+	qsort(List->Buffer, List->Size, 
+		sizeof(void*), ComparePointers);
+}
+
+static int ComparePointers(const void *a, const void *b)
+{
+	if (a < b) return -1;
+	if (b < a) return 1;
+	return 0;
 }

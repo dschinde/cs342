@@ -9,6 +9,7 @@ void *gcmalloc(size_t Size)
 void gcdebug()
 {
 	GCListUsedObjects();
+	GCListFreeObjects();
 }
 
 void gccollect()

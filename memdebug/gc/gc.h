@@ -8,5 +8,6 @@ GCObject *GCGetObject(void *Buffer);
 GCObject *GCAlloc(size_t Size);
 
 void 	  GCListUsedObjects();
+void      GCListFreeObjects();
 
 void	  GCCollect();
