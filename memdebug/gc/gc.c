@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "list.h"
 #include "log.h"
@@ -124,7 +123,7 @@ void GCFreeByIndex(GCObject *Object, size_t Index)
 {
 	assert(Object);
 	
-	GCDebug("Freeing object %p with size %lu", 
+	GCTrace("Freeing object %p with size %lu", 
 		Object, Object->Size);
 		
 	GCPopList(UsedBlocks, Index);
