@@ -1,5 +1,29 @@
 #include <stddef.h>
 
+/*
+ * A GCList an unordered collection of pointers.
+ * Elements are inserted with GCPushList() and
+ * removed with GCPopList().
+ *
+ * To iterate through a GCList:
+ *    size_t ListSize = GCQueryListSize(List);
+ *    for (size_t i = 0; i < ListSize; ++i)
+ *    {
+ *        GCObject *Object = GCGetListEntry(List, i);
+ *       // Do something with the object
+ *    }
+ *
+ * Any call to GCPushList() or GCPopList() while
+ * iterating through a GCList causes unspecified
+ * behavior. There is no safe way to insert items
+ * while iterating.
+ * If items are to be removed while iterating, call
+ * GCPinList() before starting the loop. GCPinList()
+ * prevents the GCList's elements from moving, which
+ * normally only happends when an item is removed.
+ * Call GCUnpinList() after the loop.
+ */
+
 typedef struct GCList GCList;
 typedef struct GCObject GCObject;
 
